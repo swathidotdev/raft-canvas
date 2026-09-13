@@ -1,0 +1,80 @@
+version: "3.8"
+
+networks:
+  raft-net:
+    driver: bridge
+
+# Named volumes so a `docker compose down` + `up` retains persistent Raft
+# state — that's how we actually demonstrate crash-recovery. Wipe with
+# `docker compose down -v` when you want a fresh cluster.
+volumes:
+  replica1_data:
+  replica2_data:
+  replica3_data:
+
+services:
+  gateway:
+    build: ../gateway
+    container_name: gateway
+    ports:
+      - "3000:3000"
+    environment:
+      - GATEWAY_PORT=3000
+    networks:
+      - raft-net
+    depends_on:
+      - replica1
+      - replica2
+      - replica3
+    restart: on-failure
+
+  replica1:
+    build: ../replicas
+    container_name: replica1
+    ports:
+      - "4001:4001"
+    environment:
+      - REPLICA_ID=replica1
+      - REPLICA_PORT=4001
+      - PEERS=http://replica2:4002,http://replica3:4003
+      - GATEWAY_URL=http://gateway:3000
+      - DATA_DIR=/app/data
+    volumes:
+      - replica1_data:/app/data
+    networks:
+      - raft-net
+    restart: on-failure
+
+  replica2:
+    build: ../replicas
+    container_name: replica2
+    ports:
+      - "4002:4002"
+    environment:
+      - REPLICA_ID=replica2
+      - REPLICA_PORT=4002
+      - PEERS=http://replica1:4001,http://replica3:4003
+      - GATEWAY_URL=http://gateway:3000
+      - DATA_DIR=/app/data
+    volumes:
+      - replica2_data:/app/data
+    networks:
+      - raft-net
+    restart: on-failure
+
+  replica3:
+    build: ../replicas
+    container_name: replica3
+    ports:
+      - "4003:4003"
+    environment:
+      - REPLICA_ID=replica3
+      - REPLICA_PORT=4003
+      - PEERS=http://replica1:4001,http://replica2:4002
+      - GATEWAY_URL=http://gateway:3000
+      - DATA_DIR=/app/data
+    volumes:
+      - replica3_data:/app/data
+    networks:
+      - raft-net
+    restart: on-failure

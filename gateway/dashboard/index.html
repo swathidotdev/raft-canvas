@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mini-RAFT — Cluster Dashboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">R</div>
+      <div>
+        <div class="brand-title">Mini-RAFT Cluster</div>
+        <div class="brand-sub" id="cluster-summary">connecting…</div>
+      </div>
+    </div>
+    <div class="topbar-metrics">
+      <div class="chip" id="chip-leader">leader: —</div>
+      <div class="chip" id="chip-term">term: —</div>
+      <div class="chip" id="chip-commit">commit: —</div>
+      <div class="chip" id="chip-poll">poll: —</div>
+    </div>
+  </header>
+
+  <main class="grid">
+    <section class="nodes" id="nodes"></section>
+
+    <section class="panel">
+      <h2>Fault Injection</h2>
+      <div class="fault-controls">
+        <div class="field">
+          <label for="fault-target">Target</label>
+          <select id="fault-target"></select>
+        </div>
+        <div class="field">
+          <label for="fault-peer">Affecting peer</label>
+          <select id="fault-peer">
+            <option value="all">all peers</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="fault-latency-ms">Latency (ms)</label>
+          <input id="fault-latency-ms" type="number" min="0" value="300">
+        </div>
+        <div class="field">
+          <label for="fault-drop-prob">Drop probability</label>
+          <input id="fault-drop-prob" type="number" min="0" max="1" step="0.05" value="0.5">
+        </div>
+        <div class="btnrow">
+          <button data-action="partition"    class="danger">Partition</button>
+          <button data-action="heal"                        >Heal partition</button>
+          <button data-action="latency"                     >Add latency</button>
+          <button data-action="drop"         class="warn"   >Drop msgs</button>
+          <button data-action="clear"                       >Clear faults on this node</button>
+          <button data-action="crash"        class="danger" >💥 Crash this node</button>
+          <button data-action="isolate"      class="danger" >Isolate node from cluster</button>
+          <button data-action="clear-all"                   >Clear ALL faults, ALL nodes</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel timeline-panel">
+      <h2>Event Timeline</h2>
+      <div id="timeline" class="timeline"></div>
+    </section>
+  </main>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>

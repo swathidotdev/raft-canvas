@@ -1,0 +1,14 @@
+/node_modules
+dist/
+
+# Local Raft persistence
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Node package manager logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
