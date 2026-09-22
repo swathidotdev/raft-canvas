@@ -8,7 +8,9 @@
     "dev":   "nodemon replicaServer.js",
     "test":       "jest --runInBand --detectOpenHandles",
     "test:unit":  "jest tests/unit --runInBand",
-    "test:int":   "jest tests/integration --runInBand --detectOpenHandles"
+    "test:int":   "jest tests/integration --runInBand --detectOpenHandles",
+    "bench":      "node bench/bench.js --mode inprocess",
+    "bench:http": "node bench/bench.js --mode http"
   },
   "dependencies": {
     "axios": "^1.6.0",
