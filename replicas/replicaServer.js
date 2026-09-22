@@ -43,6 +43,7 @@ const DATA_DIR    = process.env.DATA_DIR     || "/app/data";
 
 // ─── module wiring ───────────────────────────────────────────────────
 let node;
+let gatewayNotifyTimer = null;
 const logger = createLogger(REPLICA_ID, () => ({ term: node?.currentTerm, role: node?.role }));
 
 const persistence  = new Persistence({ dataDir: DATA_DIR, replicaId: REPLICA_ID, logger });
@@ -60,6 +61,10 @@ node = new RaftNode({
 node.on("role", (role) => {
   events.add(`role:${role}`, { term: node.currentTerm });
   if (role === "leader") notifyGateway();
+  else if (gatewayNotifyTimer) {
+    clearTimeout(gatewayNotifyTimer);
+    gatewayNotifyTimer = null;
+  }
 });
 node.on("commit", (commitIndex) => {
   // Commit events happen every write — noisy, so we skip them here and
@@ -86,6 +91,7 @@ setInterval(() => {
 }, 250);
 
 async function notifyGateway() {
+  gatewayNotifyTimer = null;
   try {
     await axios.post(`${GATEWAY_URL}/leader`, {
       leaderId: REPLICA_ID,
@@ -93,7 +99,10 @@ async function notifyGateway() {
     }, { timeout: 500 });
     logger.info("Notified gateway of leadership");
   } catch {
-    logger.warn("Could not reach gateway — will retry on next role change");
+    logger.warn("Could not reach gateway — retrying while leader");
+    if (node.role === "leader") {
+      gatewayNotifyTimer = setTimeout(notifyGateway, 1000);
+    }
   }
 }
 

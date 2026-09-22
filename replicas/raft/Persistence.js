@@ -74,6 +74,8 @@ class Persistence {
       insertEntry:    this.db.prepare(`INSERT INTO log_entries (idx, term, entry_type, payload) VALUES (?, ?, ?, ?)`),
       replaceEntry:   this.db.prepare(`INSERT OR REPLACE INTO log_entries (idx, term, entry_type, payload) VALUES (?, ?, ?, ?)`),
       deleteFrom:     this.db.prepare(`DELETE FROM log_entries WHERE idx >= ?`),
+      deleteUpTo:     this.db.prepare(`DELETE FROM log_entries WHERE idx <= ?`),
+      deleteAll:      this.db.prepare(`DELETE FROM log_entries`),
       getEntry:       this.db.prepare(`SELECT idx, term, entry_type, payload FROM log_entries WHERE idx = ?`),
       getRange:       this.db.prepare(`SELECT idx, term, entry_type, payload FROM log_entries WHERE idx >= ? AND idx <= ? ORDER BY idx ASC`),
       getLast:        this.db.prepare(`SELECT idx, term FROM log_entries ORDER BY idx DESC LIMIT 1`),
@@ -82,6 +84,7 @@ class Persistence {
 
       insertSnapshot: this.db.prepare(`INSERT INTO snapshots (last_included_index, last_included_term, state_blob, created_at) VALUES (?, ?, ?, ?)`),
       getLastSnap:    this.db.prepare(`SELECT * FROM snapshots ORDER BY id DESC LIMIT 1`),
+      deleteOldSnaps: this.db.prepare(`DELETE FROM snapshots WHERE id < ?`),
     };
   }
 
@@ -110,22 +113,28 @@ class Persistence {
   }
 
   // ─── log ───────────────────────────────────────────────────────────
-  /** Returns the highest log index we hold, or -1 if the log is empty. */
+  /** Returns the highest log index we hold, or the last snapshot index if the log is empty. */
   lastIndex() {
     const row = this._stmts.getLast.get();
-    return row ? row.idx : -1;
+    if (row) return row.idx;
+    const meta = this._stmts.getMeta.get();
+    return meta.last_snapshot_index;
   }
 
-  /** Returns the term of the entry at lastIndex(), or -1 if empty. */
+  /** Returns the term of the entry at lastIndex(), or the snapshot term if the log is empty. */
   lastTerm() {
     const row = this._stmts.getLast.get();
-    return row ? row.term : -1;
+    if (row) return row.term;
+    const meta = this._stmts.getMeta.get();
+    return meta.last_snapshot_term;
   }
 
-  /** Returns the lowest log index we still hold post-compaction, or -1. */
+  /** Returns the lowest log index still available in the log tail, or one past the snapshot. */
   firstIndex() {
     const row = this._stmts.getFirst.get();
-    return row ? row.idx : -1;
+    if (row) return row.idx;
+    const meta = this._stmts.getMeta.get();
+    return meta.last_snapshot_index + 1;
   }
 
   count() {
@@ -166,16 +175,27 @@ class Persistence {
     this._stmts.deleteFrom.run(fromIdx);
   }
 
+  /** Compaction: delete all log entries at or below `toIdx`. */
+  truncateUpTo(toIdx) {
+    this._stmts.deleteUpTo.run(toIdx);
+  }
+
+  /** Nuke the entire log — used when installing a snapshot that conflicts. */
+  truncateAll() {
+    this._stmts.deleteAll.run();
+  }
+
   // ─── snapshot (schema present for stage 2; helpers wired now) ──────
   saveSnapshot(lastIncludedIndex, lastIncludedTerm, stateBlob) {
     const tx = this.db.transaction(() => {
-      this._stmts.insertSnapshot.run(
+      const info = this._stmts.insertSnapshot.run(
         lastIncludedIndex,
         lastIncludedTerm,
         JSON.stringify(stateBlob),
         Date.now(),
       );
       this._stmts.setSnapMeta.run(lastIncludedIndex, lastIncludedTerm);
+      this._stmts.deleteOldSnaps.run(info.lastInsertRowid);
     });
     tx();
   }

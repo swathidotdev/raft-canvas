@@ -19,11 +19,28 @@
 const { ENTRY_TYPE } = require("./types");
 
 class StateMachine {
-  constructor({ logger }) {
+  constructor({ logger, dedupeMaxClients = 10000 }) {
     this.logger = logger;
-    this.strokes = [];           // ordered committed strokes (the canvas)
-    this.lastApplied = -1;       // highest log index applied so far
-    this._dedupe = new Map();    // clientId → highest applied seq (stage 2)
+    this.strokes = [];
+    this.lastApplied = -1;
+    this._dedupe = new Map();
+    this.dedupeMaxClients = dedupeMaxClients;
+  }
+
+  /** Non-destructive lookup used by leader's fast-path check. */
+  getDedupeIndex(clientId, seq) {
+    const entry = this._dedupe.get(clientId);
+    if (!entry) return null;
+    return entry.seq >= seq ? entry.index : null;
+  }
+
+  _touchDedupe(clientId, seq, index) {
+    this._dedupe.delete(clientId);
+    this._dedupe.set(clientId, { seq, index });
+    if (this._dedupe.size > this.dedupeMaxClients) {
+      const oldest = this._dedupe.keys().next().value;
+      this._dedupe.delete(oldest);
+    }
   }
 
   /**
@@ -32,13 +49,25 @@ class StateMachine {
    * matters during crash recovery when we replay the log.
    */
   apply(entry) {
-    if (entry.index <= this.lastApplied) return;   // already applied
+    if (entry.index <= this.lastApplied) return;
 
     if (entry.type === ENTRY_TYPE.STROKE) {
-      // Stage 2 will consult this._dedupe here before pushing.
-      this.strokes.push({ index: entry.index, ...entry.payload });
+      const payload = entry.payload || {};
+      const clientId = payload.clientId;
+      const seq = payload.seq;
+
+      if (clientId != null && seq != null) {
+        const prev = this._dedupe.get(clientId);
+        if (prev && prev.seq >= seq) {
+          this.lastApplied = entry.index;
+          return;
+        }
+        this._touchDedupe(clientId, seq, entry.index);
+      }
+
+      const { clientId: _clientId, seq: _seq, ...canvasFields } = payload;
+      this.strokes.push({ index: entry.index, ...canvasFields });
     }
-    // NOOP entries advance lastApplied but produce no visible effect.
 
     this.lastApplied = entry.index;
   }

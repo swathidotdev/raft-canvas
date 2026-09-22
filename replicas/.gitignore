@@ -3,9 +3,24 @@ dist/
 
 # Local Raft persistence
 data/
+/.smoketest-data/
 *.db
 *.db-wal
 *.db-shm
+*.sqlite
+*.sqlite3
+
+# Environment and local config
+.env
+.env.*
+
+# Test and coverage artifacts
+coverage/
+.nyc_output/
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
 
 # Node package manager logs
 npm-debug.log*

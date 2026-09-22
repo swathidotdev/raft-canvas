@@ -1,0 +1,40 @@
+name: tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [18, 20]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: replicas/package-lock.json
+
+      - name: Install dependencies
+        working-directory: replicas
+        # better-sqlite3 needs a native compile; ubuntu-latest has the toolchain.
+        run: npm ci --include=dev
+
+      - name: Run tests (unit + integration + convergence)
+        working-directory: replicas
+        run: npm test
+
+  docker-build:
+    # Sanity check that the whole stack still builds. Doesn't run it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build all images
+        working-directory: docker
+        run: docker compose build

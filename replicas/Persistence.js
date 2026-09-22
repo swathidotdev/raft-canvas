@@ -100,9 +100,8 @@ class Persistence {
   lastIndex() {
     const row = this._stmts.getLast.get();
     if (row) return row.idx;
-    // Empty log — could be truly empty, or fully compacted into a snapshot.
     const meta = this._stmts.getMeta.get();
-    return meta.last_snapshot_index;   // -1 if never snapshotted
+    return meta.last_snapshot_index;
   }
 
   lastTerm() {
@@ -117,7 +116,6 @@ class Persistence {
     const row = this._stmts.getFirst.get();
     if (row) return row.idx;
     const meta = this._stmts.getMeta.get();
-    // If nothing in log, next needed index would be one past the snapshot.
     return meta.last_snapshot_index + 1;
   }
 
