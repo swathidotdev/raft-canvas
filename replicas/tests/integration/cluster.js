@@ -183,7 +183,7 @@ class Cluster {
     );
     const uniq = Array.from(new Set(peerIds));
     const rec = await this._spawn(id, uniq);
-    const idx = this.nodes.findIndex((r) => r === null && !this.byId(id));
+    const idx = this.nodes.findIndex((r) => r === null);
     if (idx >= 0) this.nodes[idx] = rec;
     else this.nodes.push(rec);
     return rec;

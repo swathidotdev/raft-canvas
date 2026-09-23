@@ -15,14 +15,19 @@
 const axios = require("axios");
 const { sleep } = require("../tests/integration/cluster");
 
+const DEFAULT_REPLICAS = (process.env.REPLICA_URLS || [
+  "http://localhost:4001",
+  "http://localhost:4002",
+  "http://localhost:4003",
+].join(",")).split(",").filter(Boolean).map((url, index) => ({
+  id: `replica${index + 1}`,
+  url,
+}));
+
 class HttpDriver {
   constructor({
-    gatewayUrl = "http://localhost:3000",
-    replicas = [
-      { id: "replica1", url: "http://localhost:4001" },
-      { id: "replica2", url: "http://localhost:4002" },
-      { id: "replica3", url: "http://localhost:4003" },
-    ],
+    gatewayUrl = process.env.GATEWAY_URL || "http://localhost:3000",
+    replicas = DEFAULT_REPLICAS,
   } = {}) {
     this.gatewayUrl = gatewayUrl;
     this.replicas   = replicas;

@@ -33,6 +33,7 @@ const { StateMachine } = require("./raft/StateMachine");
 const { RaftNode, ENTRY_TYPE } = require("./raft/RaftNode");
 const { EventLog }     = require("./raft/EventLog");
 const { createLogger } = require("./raft/logger");
+const { getLogEntries } = require("./logHistory");
 
 // ─── env config ──────────────────────────────────────────────────────
 const REPLICA_ID  = process.env.REPLICA_ID   || "replica1";
@@ -71,7 +72,7 @@ node.on("commit", (commitIndex) => {
   // let the dashboard read commitIndex directly from /status instead.
 });
 node.on("applied", (entry) => {
-  if (entry.type !== ENTRY_TYPE.STROKE) return;
+  if (node.role !== "leader" || entry.type !== ENTRY_TYPE.STROKE) return;
   const payload = { stroke: { ...entry.payload }, logIndex: entry.index };
   axios.post(`${GATEWAY_URL}/broadcast`, payload, { timeout: 500 })
     .catch(() => logger.warn("Could not broadcast to gateway"));
@@ -170,10 +171,9 @@ app.post("/sync-log", (req, res) => {
 app.get("/log", (req, res) => {
   const from = parseInt(req.query.from || "0");
   const to   = node.commitIndex;
-  const entries = to >= from ? persistence.getRange(from, to) : [];
-  const wire = entries
-    .filter((e) => e.type === ENTRY_TYPE.STROKE)
-    .map((e) => ({ index: e.index, term: e.term, stroke: e.payload }));
+  const wire = to >= from
+    ? getLogEntries({ fromIndex: from, toIndex: to, persistence, stateMachine })
+    : [];
   res.json({ entries: wire, commitIndex: node.commitIndex, term: node.currentTerm });
 });
 

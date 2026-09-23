@@ -65,7 +65,11 @@ wss.on("connection", (ws) => {
       return;
     }
     log("Stroke received from client", JSON.stringify(stroke).slice(0, 80));
-    await forwardStrokeToLeader(stroke);
+    try {
+      await forwardStrokeToLeader(stroke);
+    } catch (err) {
+      log("Stroke forwarding failed", err.message);
+    }
   });
 
   ws.on("close", () => {
@@ -83,47 +87,42 @@ wss.on("connection", (ws) => {
 //  FORWARD STROKE → LEADER
 // ─────────────────────────────────────────────────────────────
 async function forwardStrokeToLeader(stroke) {
-  if (!currentLeaderUrl) {
-    log("No leader known — polling replicas...");
-    await discoverLeader();
-  }
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (!currentLeaderUrl) {
+      log("No leader known — polling replicas...");
+      await discoverLeader();
+    }
 
-  if (!currentLeaderUrl) {
-    log("ERROR: No leader found — stroke dropped");
-    return;
-  }
+    if (!currentLeaderUrl) {
+      if (attempt === 2) {
+        const err = new Error("No leader available");
+        err.code = "NO_LEADER";
+        throw err;
+      }
+      log("No leader found — retrying discovery");
+      continue;
+    }
 
-  try {
-    const res = await axios.post(
-      `${currentLeaderUrl}/stroke`,
-      { stroke },
-      { timeout: 1000 }
-    );
-    log("Stroke forwarded ✓", `leader=${currentLeaderId} logIndex=${res.data.logIndex}`);
-  } catch (err) {
-    if (err.response?.status === 403) {
-      // Replica says "I am not the leader" and tells us who is
-      const redirectUrl = err.response.data?.leaderUrl;
-      const redirectId  = err.response.data?.leaderId;
+    try {
+      const res = await axios.post(
+        `${currentLeaderUrl}/stroke`,
+        { stroke },
+        { timeout: 1000 },
+      );
+      log("Stroke forwarded ✓", `leader=${currentLeaderId} logIndex=${res.data.logIndex}`);
+      return res.data;
+    } catch (err) {
+      const redirectUrl = err.response?.data?.leaderUrl;
+      const redirectId  = err.response?.data?.leaderId;
       if (redirectUrl) {
         log("Redirected to real leader", `${redirectId} @ ${redirectUrl}`);
         currentLeaderUrl = redirectUrl;
         currentLeaderId  = redirectId;
-        // Retry once with the correct leader
-        try {
-          await axios.post(`${currentLeaderUrl}/stroke`, { stroke }, { timeout: 1000 });
-          log("Stroke forwarded after redirect ✓", `leader=${currentLeaderId}`);
-        } catch (retryErr) {
-          log("Retry failed — clearing leader", retryErr.message);
-          currentLeaderUrl = null;
-        }
       } else {
-        log("403 but no redirect info — clearing leader");
         currentLeaderUrl = null;
       }
-    } else {
-      log("Forward failed — leader may be down", err.message);
-      currentLeaderUrl = null; // will rediscover on next stroke
+      if (attempt === 2) throw err;
+      log("Forward failed — retrying", err.message);
     }
   }
 }
@@ -151,6 +150,24 @@ async function discoverLeader() {
 // ─────────────────────────────────────────────────────────────
 //  HTTP ENDPOINTS
 // ─────────────────────────────────────────────────────────────
+
+/**
+ * POST /stroke
+ * Forward one stroke to the current leader and return its commit ack.
+ * The same payload is retried so Raft can dedupe a lost response.
+ */
+app.post("/stroke", async (req, res) => {
+  const { stroke } = req.body;
+  if (!stroke) return res.status(400).json({ error: "stroke required" });
+
+  try {
+    const result = await forwardStrokeToLeader(stroke);
+    return res.json(result);
+  } catch (err) {
+    log("HTTP stroke failed", err.message);
+    return res.status(503).json({ error: err.message, code: err.code || "FORWARD_FAILED" });
+  }
+});
 
 /**
  * POST /leader
