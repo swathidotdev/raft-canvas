@@ -1,6 +1,6 @@
-# Mini-RAFT Distributed Drawing Board
+# Raft-canvas
 
-Mini-RAFT is a small, observable Raft cluster behind a collaborative HTML5 canvas. The project is designed to make consensus behavior visible: clients submit strokes, a leader commits them through a majority, followers apply the same ordered entries, and the dashboard can inject failures while the cluster recovers.
+Raft Canvas is a small, observable Raft cluster behind a collaborative HTML5 canvas. The project is designed to make consensus behavior visible: clients submit strokes, a leader commits them through a majority, followers apply the same ordered entries, and the dashboard can inject failures while the cluster recovers.
 
 ## Architecture
 
