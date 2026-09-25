@@ -142,7 +142,12 @@ function renderTimeline(results) {
     for (const ev of r.data.timeline) rows.push({ ...ev, node: r.replica.id });
   }
   rows.sort((a, b) => b.ts - a.ts);
-  const html = rows.slice(0, 60).map((ev) => {
+  // Keep recent fault actions visible even when raft activity fills the feed.
+  const recentFaults = rows.filter((ev) => ev.type.startsWith("fault")).slice(0, 10);
+  const visible = [...new Set([...recentFaults, ...rows.slice(0, 60)])]
+    .sort((a, b) => b.ts - a.ts)
+    .slice(0, 60);
+  const html = visible.map((ev) => {
     const cls = ev.type.startsWith("role") && ev.detail?.term ? (ev.detail && ev.type === "role:leader" ? "leader" : "role")
              : ev.type.startsWith("fault") ? "fault"
              : ev.type === "snapshot" ? "snap"

@@ -1,99 +1,89 @@
-# Raft-canvas
+# Raft Canvas
 
-Raft Canvas is a small, observable Raft cluster behind a collaborative HTML5 canvas. The project is designed to make consensus behavior visible: clients submit strokes, a leader commits them through a majority, followers apply the same ordered entries, and the dashboard can inject failures while the cluster recovers.
+**A collaborative drawing board built on a from-scratch Raft consensus implementation, with persistent logs, snapshotting, chaos engineering, and a live cluster dashboard.**
+
+> **Live dashboard preview:** run the stack with the quickstart below, then open `http://localhost:3000/dashboard/`. A repository screenshot can be added at `docs/dashboard.png` when a captured image is available.
+
+## Why This Project
+
+This started as a basic Raft demo and was deliberately extended to explore production-grade distributed-systems concerns: durable recovery, compaction, idempotent retries, linearizable reads, and observable failure handling. The canvas is the workload; the project is about keeping replicated state correct while nodes fail, recover, and communicate over unreliable links.
+
+## Distributed-Systems Features
+
+- **Consensus and replication:** leader election, majority-committed log replication, ordered state-machine application, and linearizable reads through Raft `ReadIndex`.
+- **Fault tolerance and recovery:** SQLite-backed write-ahead persistence for terms, votes, logs, and snapshots; crash recovery; log compaction; and follower catch-up through `InstallSnapshot`.
+- **Idempotency:** client `(clientId, seq)` deduplication is replicated and survives lost responses and leader failover, preventing duplicate strokes on retry.
+- **Chaos engineering:** per-link and global partition, latency, and message-drop injection through the admin API, with live role, fault, RPC, and recovery events in the dashboard.
+- **Testing:** 30 Jest tests, including election safety, log matching, failover idempotency, snapshot recovery, partition behavior, ReadIndex, and a Jepsen-style randomized convergence checker.
+- **Benchmarking:** measured HTTP throughput, commit latency percentiles, injected-fault behavior, and leader re-election time; the checked-in run is from Node 20 on Linux.
 
 ## Architecture
 
 ```text
-Browser
-  | WebSocket for live stroke updates
-  v
-Gateway :3000
-  | HTTP POST /stroke, leader discovery, retry
-  v
-Replica 1 :4001 <--> Replica 2 :4002 <--> Replica 3 :4003
-  | RaftNode: elections, replication, ReadIndex, snapshots
-  | SQLite: WAL persistence for term, vote, log tail, and snapshots
-  v
-State machine: ordered, deduplicated canvas strokes
+Client (canvas.js) -> Gateway (WebSocket fanout) -> Raft Cluster (3 nodes)
+                                                       |- replica1 (SQLite WAL)
+                                                       |- replica2 (SQLite WAL)
+                                                       `- replica3 (SQLite WAL)
 ```
 
-### Components
+The gateway discovers the current leader, forwards strokes, retries failed requests, and broadcasts committed strokes. Each replica runs the Raft state machine and exposes status, history, metrics, and fault-injection endpoints.
 
-- **Frontend** (`frontend/`): static canvas client. It connects to the gateway WebSocket, replays history from `/log`, and tags every stroke with `(clientId, seq)`.
-- **Gateway** (`gateway/`): Express and WebSocket edge service. It discovers the leader, forwards `POST /stroke`, retries the same payload, and broadcasts the leader's committed stroke to connected clients.
-- **Replicas** (`replicas/raft/`): three Raft nodes using SQLite-backed persistence and an in-process state machine. The leader is the only replica that broadcasts applied strokes.
-- **Dashboard** (`gateway/dashboard/`): cluster status, Raft timeline, and fault injection UI at `/dashboard/`.
+## Quickstart
 
-The Docker Compose network uses service names internally and publishes the gateway on `localhost:3000` and replicas on `localhost:4001`, `:4002`, and `:4003`.
-
-## Guarantees
-
-- A successful stroke acknowledgement means the leader committed the entry according to the Raft majority rule. The response includes its `logIndex`.
-- Replicas apply committed entries in log order and converge on the same deterministic state after communication is restored.
-- Retrying a stroke with the same `(clientId, seq)` is deduplicated by the state machine, including retries after a lost HTTP response or leader change.
-- Current term, vote, accepted log entries, and snapshots are persisted in SQLite with WAL mode and `synchronous=FULL`.
-- A lagging follower can catch up from the leader's snapshot through `InstallSnapshot`, then receive the remaining log tail.
-- `ReadIndex` confirms a leader's authority with a majority before returning the committed read index.
-
-## Failure Model
-
-The cluster tolerates one failed or partitioned replica in the default three-node deployment. A majority can elect a leader and commit new strokes; a minority cannot safely commit writes. When a partition heals, Raft repairs the follower from normal entries or a snapshot.
-
-The Docker services use `restart: on-failure`, so the dashboard's Crash action demonstrates process restart and SQLite recovery. Gateway retries are bounded. A retry is safe only when the client preserves the original `(clientId, seq)` pair.
-
-## Known Limitations
-
-- Membership is fixed at three replicas. There is no joint consensus, membership change, or automatic scale-out.
-- A majority is required for writes and `ReadIndex`; an isolated minority becomes unavailable for those operations.
-- The gateway's leader record and connected WebSocket clients are in memory. Restarting the gateway requires clients to reconnect and causes leader discovery to run again.
-- There is no authentication, authorization, TLS, rate limiting, or durable gateway queue. This is a local/demo system, not an internet-facing service.
-- The dedupe table is bounded to 10,000 client IDs and is part of the replicated state. Clients must use stable IDs and monotonically increasing sequence numbers.
-- The drawing model is append-only strokes. The frontend's Clear Canvas button clears only that browser's visible canvas; it is not a replicated command.
-- The frontend assumes the gateway and replicas are reachable on the same host and default ports. Change the URLs in `frontend/canvas.js` for another topology.
-
-## Run The Stack
-
-### Prerequisites
-
-- Docker Desktop with Docker Compose
-- Node.js 20 or later for local replica tooling; `better-sqlite3` is a native dependency
-- A modern browser
-
-Start the full stack from the repository root:
+Prerequisite: Docker Desktop with Docker Compose.
 
 ```bash
-cd docker
-docker compose up -d --build
+cd docker && docker compose up --build
 ```
 
-Serve the static frontend from another terminal:
+Open:
+
+- Dashboard: <http://localhost:3000/dashboard/>
+- Canvas: <http://localhost:8080>
+
+The canvas is served separately because it is a static client:
 
 ```bash
 cd frontend
 python -m http.server 8080
 ```
 
-Open <http://localhost:8080>. The gateway WebSocket is on port `3000`.
+The Compose stack publishes the gateway on port `3000` and replicas on ports `4001`, `4002`, and `4003`. Stop it with `docker compose down`; use `docker compose down -v` when you intentionally want to erase persisted replica data.
 
-Useful endpoints:
+## Benchmark Results
 
-| Service | Endpoint | Purpose |
-|---|---|---|
-| Gateway | `GET /status` | Gateway and current leader status |
-| Gateway | `POST /stroke` | Forward a stroke and return the commit acknowledgement |
-| Gateway | `WS /` | Live client updates |
-| Gateway | `POST /broadcast` | Leader-to-gateway committed-stroke notification |
-| Replica | `GET /status` | Raft role, term, commit, snapshot, and log metadata |
-| Replica | `GET /log?from=0` | Committed history, including snapshot-compacted strokes |
-| Replica | `GET /read-linearizable` | Leader-confirmed read of the current state |
-| Replica | `GET /metrics` | Status, RPC metrics, faults, and event timeline |
+These values come from [the checked-in HTTP benchmark report](replicas/bench/results/2026-09-23T18-17-26-248Z-http.md), using four concurrent clients for throughput and serial submissions for latency.
 
-Stop the stack with `docker compose down`. Add `-v` when you intentionally want to erase the named SQLite volumes and start with empty replicas.
+| Scenario | Throughput | p50 latency | p99 latency |
+|---|---:|---:|---:|
+| Steady state | 98.3 strokes/s | 5.88 ms | 8.25 ms |
+| +50 ms injected RPC latency | 86.1 strokes/s | 5.37 ms | 8.49 ms |
+| 5% message drop | 132 strokes/s | 4.83 ms | 8.71 ms |
 
-## Tests
+Leader re-election after a kill: **184 ms average**, **3.90 ms p50**, **906 ms p95** across five trials.
 
-Install replica dependencies and run the complete suite:
+Run the HTTP benchmark against the running stack:
+
+```bash
+cd replicas
+npm install
+npm run bench:http
+```
+
+## Testing
+
+The test suite covers:
+
+- election safety and term monotonicity
+- split-brain prevention and majority commit behavior
+- log matching and ordered state-machine application
+- exactly-once effects from client retries under leader failover
+- SQLite term, vote, log, and snapshot persistence
+- snapshot compaction and `InstallSnapshot` catch-up
+- linearizable reads through `ReadIndex`
+- convergence under randomized partitions, latency, concurrent writes, and recovery
+
+Run it with:
 
 ```bash
 cd replicas
@@ -101,67 +91,16 @@ npm install
 npm test
 ```
 
-Useful narrower commands:
+The Jepsen-style convergence test is a five-node in-process stress scenario that retries concurrent writes during randomized chaos and verifies identical committed state on every live node.
 
-```bash
-npm run test:unit
-npm run test:int
-```
+## Limitations
 
-The integration suite covers convergence, partitions, failover/deduplication, history replay after compaction, snapshot compaction, `InstallSnapshot` catch-up, SQLite restart recovery, and `ReadIndex`. `node smoketest.js` runs a smaller three-node recovery check without HTTP or Docker.
+- The single gateway remains a service and WebSocket fanout single point of failure.
+- Membership is static: there is no joint consensus, dynamic reconfiguration, or automatic scale-out.
+- There is no multi-Raft sharding, authentication, authorization, TLS, rate limiting, or durable gateway queue.
+- The canvas workload is append-only; clearing the local canvas is not a replicated command.
+- The deduplication index is bounded to 10,000 client IDs, and clients must preserve stable IDs and monotonically increasing sequence numbers.
 
-If the local Node version cannot build `better-sqlite3`, run the tests in the Node 20 replica image instead:
+## Tech Stack
 
-```bash
-cd docker
-docker compose exec replica1 npm install --include=dev
-docker compose exec replica1 npm test -- --silent
-```
-
-## Chaos Demo
-
-Open <http://localhost:3000/dashboard/> while the stack is running. The dashboard polls every replica and can inject:
-
-- partitions and full-node isolation
-- per-peer or global latency
-- message drops
-- replica crashes with automatic Docker restart
-- clearing faults on one node or every node
-
-The same controls are HTTP endpoints on each replica. For example:
-
-```bash
-curl -X POST http://localhost:4001/admin/fault/partition \
-  -H "Content-Type: application/json" \
-  -d '{"peer":"replica2"}'
-
-curl -X POST http://localhost:4001/admin/fault/clear
-```
-
-Watch `/status`, `/metrics`, the dashboard timeline, and the canvas while the leader changes. A minority partition should stop committing; after healing, followers should converge again.
-
-## Benchmark
-
-The benchmark has two modes:
-
-- `npm run bench`: in-process Raft with fake transport. This isolates consensus and SQLite behavior from HTTP and Docker overhead.
-- `npm run bench:http`: real Axios and Express traffic through the gateway. The default host configuration uses `localhost:3000` and replicas on `localhost:4001-4003`.
-
-Run the HTTP benchmark against a running stack:
-
-```bash
-cd replicas
-npm run bench:http
-```
-
-It measures steady-state throughput and commit latency, then repeats throughput/latency under `+50ms` RPC latency and `5%` message drop, and finally measures five leader re-elections. The leader-kill scenario must run outside the replica being killed. A Docker-safe runner is:
-
-```bash
-docker run --rm --network docker_raft-net \
-  -e GATEWAY_URL=http://gateway:3000 \
-  -e REPLICA_URLS=http://replica1:4001,http://replica2:4002,http://replica3:4003 \
-  -v "$PWD/../replicas/bench/results:/app/bench/results" \
-  docker-replica1 node bench/bench.js --mode http
-```
-
-Reports are printed to stdout and written under `replicas/bench/results/`. Tune the run with `--duration`, `--clients`, `--latency-samples`, `--reelect-trials`, `--skip-faults`, or `--skip-reelect`. The checked-in report is [2026-09-23T18-17-26-248Z-http.md](replicas/bench/results/2026-09-23T18-17-26-248Z-http.md).
+Node.js, Express, `better-sqlite3`, vanilla JavaScript, Docker Compose, and Jest.
