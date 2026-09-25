@@ -2,7 +2,9 @@
 
 A collaborative drawing board built on a from-scratch Raft consensus implementation — with persistent logs, snapshotting, chaos engineering, and a live cluster dashboard.
 
-<!-- Live preview GIF/screenshot goes here -->
+## Live dashboard
+
+![Live Raft dashboard](docs/dashboard.png)
 
 ## Why this project
 
