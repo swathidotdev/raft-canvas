@@ -1,106 +1,111 @@
-# Raft Canvas
+# Raft Canvas - Distributed Drawing Board on a From-Scratch Raft Cluster
 
-**A collaborative drawing board built on a from-scratch Raft consensus implementation, with persistent logs, snapshotting, chaos engineering, and a live cluster dashboard.**
+A collaborative drawing board built on a from-scratch Raft consensus implementation — with persistent logs, snapshotting, chaos engineering, and a live cluster dashboard.
 
-> **Live dashboard preview:** run the stack with the quickstart below, then open `http://localhost:3000/dashboard/`. A repository screenshot can be added at `docs/dashboard.png` when a captured image is available.
+<!-- Live preview GIF/screenshot goes here -->
 
-## Why This Project
+## Why this project
 
-This started as a basic Raft demo and was deliberately extended to explore production-grade distributed-systems concerns: durable recovery, compaction, idempotent retries, linearizable reads, and observable failure handling. The canvas is the workload; the project is about keeping replicated state correct while nodes fail, recover, and communicate over unreliable links.
+This started as a small Raft demo and was deliberately extended into a production-style distributed systems exercise. The goal was not to build a polished drawing app, but to stress the core invariants that actually matter in a replicated system: leader election, log safety, crash recovery, idempotent writes, and safe failover under chaos.
 
-## Distributed-Systems Features
+## What it demonstrates
 
-- **Consensus and replication:** leader election, majority-committed log replication, ordered state-machine application, and linearizable reads through Raft `ReadIndex`.
-- **Fault tolerance and recovery:** SQLite-backed write-ahead persistence for terms, votes, logs, and snapshots; crash recovery; log compaction; and follower catch-up through `InstallSnapshot`.
-- **Idempotency:** client `(clientId, seq)` deduplication is replicated and survives lost responses and leader failover, preventing duplicate strokes on retry.
-- **Chaos engineering:** per-link and global partition, latency, and message-drop injection through the admin API, with live role, fault, RPC, and recovery events in the dashboard.
-- **Testing:** 30 Jest tests, including election safety, log matching, failover idempotency, snapshot recovery, partition behavior, ReadIndex, and a Jepsen-style randomized convergence checker.
-- **Benchmarking:** measured HTTP throughput, commit latency percentiles, injected-fault behavior, and leader re-election time; the checked-in run is from Node 20 on Linux.
+- Consensus & replication: leader election, log replication, and linearizable reads via a ReadIndex-style read path.
+- Fault tolerance & recovery: persistent SQLite WAL storage, crash recovery, snapshotting, and log compaction.
+- Idempotency: client deduplication survives leader failover and retried writes without duplicating strokes.
+- Chaos engineering: partition, latency, and drop injection through the admin API and live dashboard.
+- Testing: a Jest suite covering election safety, split-brain prevention, failover semantics, convergence, and restart recovery.
+- Benchmarking: measured throughput and latency under steady state and injected faults, plus re-election timing after a leader kill.
 
 ## Architecture
 
 ```text
-Client (canvas.js) -> Gateway (WebSocket fanout) -> Raft Cluster (3 nodes)
-                                                       |- replica1 (SQLite WAL)
-                                                       |- replica2 (SQLite WAL)
-                                                       `- replica3 (SQLite WAL)
+Client (browser canvas)
+    ↓
+Gateway (WS fanout + leader routing)
+    ↓
+Raft cluster (3 nodes)
+    ├─ replica1 (SQLite WAL + state machine)
+    ├─ replica2 (SQLite WAL + state machine)
+    └─ replica3 (SQLite WAL + state machine)
 ```
-
-The gateway discovers the current leader, forwards strokes, retries failed requests, and broadcasts committed strokes. Each replica runs the Raft state machine and exposes status, history, metrics, and fault-injection endpoints.
 
 ## Quickstart
 
-Prerequisite: Docker Desktop with Docker Compose.
+Prerequisite: Docker Desktop must be running on your machine.
+
+From the project root:
 
 ```bash
-cd docker && docker compose up --build
+cd docker
+docker compose up --build
 ```
 
-Open:
+Then open:
 
-- Dashboard: <http://localhost:3000/dashboard/>
-- Canvas: <http://localhost:8080>
+- Dashboard: http://localhost:3000/dashboard
+- Gateway status: http://localhost:3000/status
+- Replica statuses:
+  - http://localhost:4001/status
+  - http://localhost:4002/status
+  - http://localhost:4003/status
 
-The canvas is served separately because it is a static client:
+To stop the cluster:
+
+```bash
+docker compose down
+```
+
+To reset persisted Raft data:
+
+```bash
+docker compose down -v
+```
+
+Run the frontend in a second terminal:
 
 ```bash
 cd frontend
 python -m http.server 8080
 ```
 
-The Compose stack publishes the gateway on port `3000` and replicas on ports `4001`, `4002`, and `4003`. Stop it with `docker compose down`; use `docker compose down -v` when you intentionally want to erase persisted replica data.
+Then open http://localhost:8080.
 
-## Benchmark Results
+## Benchmark results
 
-These values come from [the checked-in HTTP benchmark report](replicas/bench/results/2026-09-23T18-17-26-248Z-http.md), using four concurrent clients for throughput and serial submissions for latency.
+Actual measurements from the project’s HTTP benchmark run in `replicas/bench/results/2026-09-23T18-17-26-248Z-http.md`.
 
 | Scenario | Throughput | p50 latency | p99 latency |
 |---|---:|---:|---:|
-| Steady state | 98.3 strokes/s | 5.88 ms | 8.25 ms |
-| +50 ms injected RPC latency | 86.1 strokes/s | 5.37 ms | 8.49 ms |
-| 5% message drop | 132 strokes/s | 4.83 ms | 8.71 ms |
+| Steady state | 98.3 strokes/s | 5.88ms | 8.25ms |
+| +50ms injected latency | 86.1 strokes/s | 5.37ms | 8.49ms |
+| 5% message drop | 132 strokes/s | 4.83ms | 8.71ms |
 
-Leader re-election after a kill: **184 ms average**, **3.90 ms p50**, **906 ms p95** across five trials.
-
-Run the HTTP benchmark against the running stack:
-
-```bash
-cd replicas
-npm install
-npm run bench:http
-```
+Leader re-election after an intentional kill averaged 184ms, with a p95 of 906ms across 5 trials.
 
 ## Testing
 
-The test suite covers:
+The project includes a focused Jest suite covering the invariants that matter in a Raft cluster:
 
 - election safety and term monotonicity
-- split-brain prevention and majority commit behavior
-- log matching and ordered state-machine application
-- exactly-once effects from client retries under leader failover
-- SQLite term, vote, log, and snapshot persistence
-- snapshot compaction and `InstallSnapshot` catch-up
-- linearizable reads through `ReadIndex`
-- convergence under randomized partitions, latency, concurrent writes, and recovery
+- no-op-on-election commit behavior
+- split-brain prevention during minority partitions
+- stale leader step-down after recovery
+- exactly-once write semantics across leader failover
+- snapshot compaction, restart recovery, and linearizable reads
+- randomized chaos convergence checks across a live cluster
 
-Run it with:
+This is the part of the project that proves the Raft logic is not just implemented, but stress-tested under failure conditions.
 
-```bash
-cd replicas
-npm install
-npm test
-```
+## What I’d do differently
 
-The Jepsen-style convergence test is a five-node in-process stress scenario that retries concurrent writes during randomized chaos and verifies identical committed state on every live node.
+- The single gateway is still a SPOF for client-facing traffic.
+- Membership is static rather than dynamically reconfigurable.
+- The system is intentionally limited to one Raft group and does not explore sharding or multi-cluster partitioning.
+- There is no external auth, multi-tenant isolation, or production observability stack beyond the local dashboard and metrics.
 
-## Limitations
+These are real engineering boundaries, not excuses — they mark where the project is deliberately scoped to a single distributed systems exercise.
 
-- The single gateway remains a service and WebSocket fanout single point of failure.
-- Membership is static: there is no joint consensus, dynamic reconfiguration, or automatic scale-out.
-- There is no multi-Raft sharding, authentication, authorization, TLS, rate limiting, or durable gateway queue.
-- The canvas workload is append-only; clearing the local canvas is not a replicated command.
-- The deduplication index is bounded to 10,000 client IDs, and clients must preserve stable IDs and monotonically increasing sequence numbers.
+## Tech stack
 
-## Tech Stack
-
-Node.js, Express, `better-sqlite3`, vanilla JavaScript, Docker Compose, and Jest.
+Node.js, Express, better-sqlite3, vanilla JavaScript, Docker Compose, and Jest.
