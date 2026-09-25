@@ -1,4 +1,4 @@
-# Raft Canvas - Distributed Drawing Board on a From-Scratch Raft Cluster
+# Raft Canvas
 
 A collaborative drawing board built on a from-scratch Raft consensus implementation — with persistent logs, snapshotting, chaos engineering, and a live cluster dashboard.
 
